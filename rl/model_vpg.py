@@ -1,5 +1,4 @@
 import gym
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
@@ -8,7 +7,7 @@ from torch.distributions.categorical import Categorical
 from rl.lib.nets import MLP
 from rl.lib.memory import ReplayBuffer
 from rl.lib.torch_utils import to_tensor
-from rl.simple_policy import train as train_policy
+from rl.simple_policy import train as train_policy, run as run_policy
 
 
 class Model(nn.Module):
@@ -36,8 +35,16 @@ class Model(nn.Module):
 
         return next_state, r, d_sig, d_logits
 
-    def step(self, action):
-        return self.forward(self.curr_state, action)
+    def step(self, action, threshold=0.5):
+        curr_state_tensor = to_tensor(self.curr_state.reshape(1, -1))
+        action_tensor = torch.Tensor([action]).float()
+        next_state, r, d_sig, _ = self.forward(curr_state_tensor, action_tensor)
+        return (
+            next_state[0].detach().numpy(),
+            r[0, 0].detach().item(),
+            d_sig[0, 0].item() > threshold,
+            {}
+        )
 
     def reset(self):
         self.curr_state = self.init_states.sample()
@@ -99,32 +106,35 @@ def train_model(env, model, policy, memory, eps, train_eps, batch_size, lr):
 
     total_losses = []
     for i in range(train_eps):
-        batch = memory.sample(batch_size)
-        states, actions, rewards, dones, next_states = batch
-        states_tensor = to_tensor(states)
-        actions_tensor = to_tensor(actions)
-        rewards_tensor = to_tensor(rewards)
-        dones_tensor = to_tensor(dones)
-        next_states_tensor = to_tensor(next_states)
-        pred_ns, pred_r, _, pred_d_logits = model(states_tensor, actions_tensor)
+        indices = np.arange(len(memory))
+        np.random.shuffle(indices)
+        for batch_start in range(0, len(memory), batch_size):
+            batch = memory.get_data(indices[batch_start:batch_start + batch_size])
+            states, actions, rewards, dones, next_states = batch
+            states_tensor = to_tensor(states)
+            actions_tensor = to_tensor(actions)
+            rewards_tensor = to_tensor(rewards)
+            dones_tensor = to_tensor(dones)
+            next_states_tensor = to_tensor(next_states)
+            pred_ns, pred_r, _, pred_d_logits = model(states_tensor, actions_tensor)
 
-        ns_loss = nn.MSELoss()(pred_ns, next_states_tensor)
-        r_loss = nn.MSELoss()(pred_r.squeeze(dim=1), rewards_tensor)
-        d_loss = nn.BCEWithLogitsLoss()(pred_d_logits.squeeze(dim=1), dones_tensor)
-        total_loss = ns_loss + r_loss + d_loss
+            ns_loss = nn.MSELoss()(pred_ns, next_states_tensor)
+            r_loss = nn.MSELoss()(pred_r.squeeze(dim=1), rewards_tensor)
+            d_loss = nn.BCEWithLogitsLoss()(pred_d_logits.squeeze(dim=1), dones_tensor)
+            total_loss = ns_loss + r_loss + 100 * d_loss
 
-        model.zero_grad()
-        total_loss.backward()
-        optimizer.step()
+            model.zero_grad()
+            total_loss.backward()
+            optimizer.step()
 
-        total_losses.append(total_loss)
+            total_losses.append(total_loss)
 
     return total_losses
 
 
 N_EPS = 10
 MODEL_EPS = 12000
-TRAIN_EPS = 1000
+TRAIN_EPS = 100
 BATCH_SIZE = 512
 LR = 4e-4
 EPOCHS = 50
@@ -143,12 +153,16 @@ def train(env, model, policy, v_fn, memory):
                     batch_size=BATCH_SIZE,
                     lr=LR)
         print('Model Training Complete. Begin Policy Training')
-        train_policy(env, policy, v_fn,
+        train_policy(model, policy, v_fn,
                      epochs=EPOCHS,
                      policy_lr=POLICY_LR,
                      v_lr=V_LR,
                      train_v_iters=TRAIN_V_ITERS,
                      batch_size=POLICY_BATCH_SIZE)
+        print('Testing')
+        _, _, _, rewards = run_policy(env, 500, policy)
+        mean_reward = sum([sum(ep_rewards) for ep_rewards in rewards]) / len(rewards)
+        print(f'Test Episode {i + 1}: Mean Reward = {mean_reward:.2f}')
 
 
 def main():

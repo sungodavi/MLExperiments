@@ -19,7 +19,7 @@ def reward_to_go(batch_rewards, gamma=1):
     return np.concatenate(arrs)
 
 
-def run(env, batch_size, policy, render=False):
+def run(env, batch_size, policy, max_eps=500, render=False):
     first_render = True
     logits = []
     actions = []
@@ -28,7 +28,7 @@ def run(env, batch_size, policy, render=False):
     ep_rewards = []
 
     obs = env.reset()
-    while True:
+    for _ in range(max_eps):
         if render and first_render:
             env.render()
 
@@ -50,5 +50,8 @@ def run(env, batch_size, policy, render=False):
 
             if len(actions) > batch_size:
                 break
+
+    if len(ep_rewards) > 0:
+        rewards.append(ep_rewards)
 
     return states, actions, logits, rewards
