@@ -20,12 +20,7 @@ def policy_loss(logits, actions, rewards):
     return -torch.mean(log_probs * rewards)
 
 
-def train(env, epochs=100, policy_lr=1e-2, v_lr=1e-3, train_v_iters=80, batch_size=5000):
-    obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.n
-    policy = MLP(dims=(obs_dim, 24, 24, act_dim)).float()
-    V = MLP(dims=(obs_dim, 32, 32, 1)).float()
-
+def train(env, policy, V, epochs=100, policy_lr=1e-2, v_lr=1e-3, train_v_iters=80, batch_size=5000):
     policy_optimizer = torch.optim.Adam(policy.parameters(), lr=policy_lr)
     v_optimizer = torch.optim.Adam(V.parameters(), lr=v_lr)
     mean_rewards = []
@@ -56,12 +51,16 @@ def train(env, epochs=100, policy_lr=1e-2, v_lr=1e-3, train_v_iters=80, batch_si
             value_loss.backward()
             v_optimizer.step()
 
-    return policy, mean_rewards
+    return mean_rewards
 
 
-if __name__ == '__main__':
+def main():
     env = gym.make('CartPole-v1')
-    policy, mean_rewards = train(env)
+    obs_dim = env.observation_space.shape[0]
+    act_dim = env.action_space.n
+    policy = MLP(dims=(obs_dim, 24, 24, act_dim)).float()
+    V = MLP(dims=(obs_dim, 32, 32, 1)).float()
+    mean_rewards = train(env, policy, V)
 
     plt.plot(mean_rewards)
     plt.show()
@@ -74,3 +73,5 @@ if __name__ == '__main__':
     env.close()
 
 
+if __name__ == '__main__':
+    main()
